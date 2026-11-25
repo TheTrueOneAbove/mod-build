@@ -1,0 +1,288 @@
+name: Build mod jar
+on:
+  workflow_dispatch:
+  push:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.1.1
+      - name: Write project files
+        run: |
+          mkdir -p $(dirname 'build.gradle')
+          cat > 'build.gradle' <<'MODEOF'
+          plugins {
+              id 'eclipse'
+              id 'maven-publish'
+              id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+          }
+
+          version = '1.0.0'
+          group = 'com.thetrueoneabove'
+          archivesBaseName = 'thetrueoneabove'
+
+          java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+          minecraft {
+              mappings channel: 'official', version: '1.20.1'
+              copyIdeResources = true
+              runs {
+                  configureEach {
+                      workingDirectory project.file('run')
+                      property 'forge.logging.console.level', 'debug'
+                      mods { thetrueoneabove { source sourceSets.main } }
+                  }
+                  client {}
+                  server { args '--nogui' }
+              }
+          }
+
+          repositories { mavenCentral() }
+          dependencies {
+              minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
+          }
+
+          jar {
+              manifest { attributes([
+                  'Specification-Title': 'thetrueoneabove',
+                  'Specification-Vendor': 'TheTrueOneAbove',
+                  'Specification-Version': '1',
+                  'Implementation-Title': project.name,
+                  'Implementation-Version': project.jar.archiveVersion,
+                  'Implementation-Vendor': 'TheTrueOneAbove'
+              ]) }
+          }
+          MODEOF
+          mkdir -p $(dirname 'settings.gradle')
+          cat > 'settings.gradle' <<'MODEOF'
+          pluginManagement { repositories { gradlePluginPortal(); maven { url = 'https://maven.minecraftforge.net/' } } }
+          plugins { id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0' }
+          rootProject.name = 'TheTrueOneAbove'
+          MODEOF
+          mkdir -p $(dirname 'src/main/resources/pack.mcmeta')
+          cat > 'src/main/resources/pack.mcmeta' <<'MODEOF'
+          {"pack":{"description":"TheTrueOneAbove resources","pack_format":15}}
+          MODEOF
+          mkdir -p $(dirname 'src/main/resources/META-INF/mods.toml')
+          cat > 'src/main/resources/META-INF/mods.toml' <<'MODEOF'
+          modLoader="javafml"
+          loaderVersion="[47,)"
+          license="MIT"
+          [[mods]]
+          modId="thetrueoneabove"
+          version="1.0.0"
+          displayName="TheTrueOneAbove"
+          authors="TheTrueOneAbove"
+          description='''Become TheTrueOneAbove. Type “let there be light” in chat to unleash the whiteout and remove hostile/non-player living entities. Players are never targeted.'''
+          [[dependencies.thetrueoneabove]]
+          modId="forge"
+          mandatory=true
+          versionRange="[47,)"
+          ordering="NONE"
+          side="BOTH"
+          [[dependencies.thetrueoneabove]]
+          modId="minecraft"
+          mandatory=true
+          versionRange="[1.20.1,1.20.2)"
+          ordering="NONE"
+          side="BOTH"
+          MODEOF
+          mkdir -p $(dirname 'src/main/java/com/thetrueoneabove/mod/NetworkHandler.java')
+          cat > 'src/main/java/com/thetrueoneabove/mod/NetworkHandler.java' <<'MODEOF'
+          package com.thetrueoneabove.mod;
+
+          import net.minecraft.resources.ResourceLocation;
+          import net.minecraftforge.network.NetworkRegistry;
+          import net.minecraftforge.network.simple.SimpleChannel;
+
+          public final class NetworkHandler {
+              private static final String PROTOCOL = "1";
+              public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
+                      new ResourceLocation(TheTrueOneAboveMod.MODID, "main"),
+                      () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
+
+              private NetworkHandler() {}
+
+              public static void register() {
+                  CHANNEL.registerMessage(0, WhiteFlashPacket.class,
+                          WhiteFlashPacket::encode, WhiteFlashPacket::decode, WhiteFlashPacket::handle);
+              }
+          }
+          MODEOF
+          mkdir -p $(dirname 'src/main/java/com/thetrueoneabove/mod/WhiteFlashPacket.java')
+          cat > 'src/main/java/com/thetrueoneabove/mod/WhiteFlashPacket.java' <<'MODEOF'
+          package com.thetrueoneabove.mod;
+
+          import net.minecraft.network.FriendlyByteBuf;
+          import net.minecraftforge.api.distmarker.Dist;
+          import net.minecraftforge.fml.DistExecutor;
+          import net.minecraftforge.network.NetworkEvent;
+
+          import java.util.function.Supplier;
+
+          public class WhiteFlashPacket {
+              public WhiteFlashPacket() {}
+
+              public static void encode(WhiteFlashPacket message, FriendlyByteBuf buffer) {}
+              public static WhiteFlashPacket decode(FriendlyByteBuf buffer) { return new WhiteFlashPacket(); }
+
+              public static void handle(WhiteFlashPacket message, Supplier<NetworkEvent.Context> contextSupplier) {
+                  NetworkEvent.Context context = contextSupplier.get();
+                  context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT,
+                          () -> ClientWhiteFlash::start));
+                  context.setPacketHandled(true);
+              }
+          }
+          MODEOF
+          mkdir -p $(dirname 'src/main/java/com/thetrueoneabove/mod/TheTrueOneAboveMod.java')
+          cat > 'src/main/java/com/thetrueoneabove/mod/TheTrueOneAboveMod.java' <<'MODEOF'
+          package com.thetrueoneabove.mod;
+
+          import net.minecraft.network.chat.Component;
+          import net.minecraft.server.MinecraftServer;
+          import net.minecraft.server.level.ServerLevel;
+          import net.minecraft.server.level.ServerPlayer;
+          import net.minecraft.world.entity.Entity;
+          import net.minecraft.world.entity.player.Player;
+          import net.minecraft.world.effect.MobEffectInstance;
+          import net.minecraft.world.effect.MobEffects;
+          import net.minecraft.core.particles.ParticleTypes;
+          import net.minecraftforge.common.MinecraftForge;
+          import net.minecraftforge.event.ServerChatEvent;
+          import net.minecraftforge.event.TickEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+          import net.minecraftforge.network.PacketDistributor;
+
+          @Mod(TheTrueOneAboveMod.MODID)
+          public class TheTrueOneAboveMod {
+              public static final String MODID = "thetrueoneabove";
+              public static final String TRANSFORMED_TAG = "thetrueoneabove_transformed";
+
+              public TheTrueOneAboveMod() {
+                  IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+                  modBus.addListener(this::commonSetup);
+                  MinecraftForge.EVENT_BUS.register(this);
+              }
+
+              private void commonSetup(final FMLCommonSetupEvent event) {
+                  event.enqueueWork(NetworkHandler::register);
+              }
+
+              @SubscribeEvent
+              public void onChat(ServerChatEvent event) {
+                  String message = event.getMessage().getString().trim();
+                  if (!message.equalsIgnoreCase("let there be light")) return;
+
+                  event.setCanceled(true);
+                  ServerPlayer caster = event.getPlayer();
+                  transform(caster);
+
+                  MinecraftServer server = caster.getServer();
+                  if (server == null) return;
+
+                  // Remove non-player entities in every loaded dimension. Players are explicitly excluded.
+                  for (ServerLevel level : server.getAllLevels()) {
+                      for (Entity entity : level.getAllEntities()) {
+                          if (!(entity instanceof Player)) {
+                              entity.discard();
+                          }
+                      }
+                  }
+
+                  // Trigger a brief full-screen white flash for every connected player.
+                  NetworkHandler.CHANNEL.send(PacketDistributor.ALL.noArg(), new WhiteFlashPacket());
+                  for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                      player.sendSystemMessage(Component.literal("TheTrueOneAbove has spoken: LET THERE BE LIGHT."));
+                  }
+              }
+
+              private static void transform(ServerPlayer player) {
+                  player.getPersistentData().putBoolean(TRANSFORMED_TAG, true);
+                  player.setCustomName(Component.literal("TheTrueOneAbove"));
+                  player.setCustomNameVisible(true);
+                  player.getAbilities().invulnerable = true;
+                  player.onUpdateAbilities();
+                  applyPowers(player);
+              }
+
+              private static void applyPowers(ServerPlayer player) {
+                  player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 20 * 60 * 60, 4, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 20 * 60 * 60, 2, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.JUMP, 20 * 60 * 60, 3, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 20 * 60 * 60, 0, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 20 * 60 * 60, 0, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.GLOWING, 20 * 60 * 60, 0, false, false, true));
+                  player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 20 * 60 * 60, 4, false, false, true));
+              }
+
+              @SubscribeEvent
+              public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+                  if (event.phase != TickEvent.Phase.END || !(event.player instanceof ServerPlayer player)) return;
+                  if (!player.getPersistentData().getBoolean(TRANSFORMED_TAG)) return;
+                  player.getAbilities().invulnerable = true;
+                  if (player.tickCount % 100 == 0) applyPowers(player);
+                  if (player.tickCount % 8 == 0) {
+                      ServerLevel level = player.serverLevel();
+                      level.sendParticles(ParticleTypes.END_ROD, player.getX(), player.getY() + 1.0, player.getZ(),
+                              5, 0.45, 0.75, 0.45, 0.015);
+                  }
+              }
+          }
+          MODEOF
+          mkdir -p $(dirname 'src/main/java/com/thetrueoneabove/mod/ClientWhiteFlash.java')
+          cat > 'src/main/java/com/thetrueoneabove/mod/ClientWhiteFlash.java' <<'MODEOF'
+          package com.thetrueoneabove.mod;
+
+          import net.minecraft.client.Minecraft;
+          import net.minecraftforge.api.distmarker.Dist;
+          import net.minecraftforge.client.event.RenderGuiOverlayEvent;
+          import net.minecraftforge.event.TickEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.common.Mod.EventBusSubscriber;
+
+          @EventBusSubscriber(modid = TheTrueOneAboveMod.MODID, value = Dist.CLIENT)
+          public final class ClientWhiteFlash {
+              private static int ticksLeft = 0;
+
+              private ClientWhiteFlash() {}
+
+              public static void start() { ticksLeft = 70; }
+
+              @SubscribeEvent
+              public static void onClientTick(TickEvent.ClientTickEvent event) {
+                  if (event.phase == TickEvent.Phase.END && ticksLeft > 0) ticksLeft--;
+              }
+
+              @SubscribeEvent
+              public static void onOverlay(RenderGuiOverlayEvent.Post event) {
+                  if (ticksLeft <= 0 || Minecraft.getInstance().options.hideGui) return;
+                  int alpha = ticksLeft > 50 ? 255 : Math.min(255, ticksLeft * 5);
+                  int color = (alpha << 24) | 0x00FFFFFF;
+                  event.getGuiGraphics().fill(0, 0, event.getWindow().getGuiScaledWidth(),
+                          event.getWindow().getGuiScaledHeight(), color);
+              }
+          }
+          MODEOF
+      - name: Build
+        run: gradle build --no-daemon
+      - name: Publish jar as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "jar-${{ github.run_number }}" build/libs/thetrueoneabove-1.0.0.jar --title "TheTrueOneAbove jar" --notes "Forge 1.20.1 mod jar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thetrueoneabove-jar
+          path: build/libs/*.jar
