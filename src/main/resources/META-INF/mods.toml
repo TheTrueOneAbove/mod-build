@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+[[mods]]
+modId="thetrueoneabove"
+version="1.0.0"
+displayName="TheTrueOneAbove"
+authors="TheTrueOneAbove"
+description='''Become TheTrueOneAbove. Type “let there be light” in chat to unleash the whiteout and remove hostile/non-player living entities. Players are never targeted.'''
+[[dependencies.thetrueoneabove]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.thetrueoneabove]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.20.2)"
+ordering="NONE"
+side="BOTH"
